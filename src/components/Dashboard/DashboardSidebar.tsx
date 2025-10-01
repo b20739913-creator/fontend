@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { SearchIcon, ChevronRightIcon } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
-import { apiService, DashboardData, HierarchyNode, Device } from '../../services/api';
+import { apiService, DashboardData, HierarchyNode, Device, EnhancedDevice } from '../../services/api';
 
 interface DashboardSidebarProps {
   onDeviceSelect?: (device: Device) => void;
@@ -26,6 +26,7 @@ const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [devices, setDevices] = useState<Device[]>([]);
   const [devicesByHierarchy, setDevicesByHierarchy] = useState<Record<string, Device[]>>({});
+  const [enhancedDevices, setEnhancedDevices] = useState<Record<string, EnhancedDevice>>({});
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -68,12 +69,12 @@ const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
 
     const loadDevices = async () => {
       if (!token) return;
-      
+
       try {
         const response = await apiService.getAllDevices(token);
         if (response.success && response.data) {
           setDevices(response.data.devices);
-          
+
           // Group devices by their hierarchy location
           const deviceGroups: Record<string, Device[]> = {};
           response.data.devices.forEach(device => {
@@ -85,7 +86,7 @@ const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
             }
             deviceGroups[locationKey].push(device);
           });
-          
+
           setDevicesByHierarchy(deviceGroups);
         }
       } catch (error) {
@@ -93,8 +94,34 @@ const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
       }
     };
 
+    const loadEnhancedDevices = async () => {
+      if (!token) return;
+
+      try {
+        const response = await apiService.getAllDevicesEnhanced(token);
+        if (response.success && response.data) {
+          // Create a map of device serial to enhanced device for quick lookup
+          const deviceMap: Record<string, EnhancedDevice> = {};
+          response.data.devices.forEach(device => {
+            deviceMap[device.deviceSerial] = device;
+          });
+          setEnhancedDevices(deviceMap);
+        }
+      } catch (error) {
+        console.error('Failed to load enhanced devices:', error);
+      }
+    };
+
     loadDashboardData();
     loadDevices();
+    loadEnhancedDevices();
+
+    // Auto-refresh enhanced devices every 5 seconds to keep status updated
+    const refreshInterval = setInterval(() => {
+      loadEnhancedDevices();
+    }, 5000);
+
+    return () => clearInterval(refreshInterval);
   }, [token]);
 
   const toggleExpanded = (id: string) => {
@@ -180,25 +207,37 @@ const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
 
   const renderDevicesForHierarchy = (hierarchyName: string, level = 0) => {
     const hierarchyDevices = devicesByHierarchy[hierarchyName] || [];
-    
+
     if (hierarchyDevices.length === 0) return null;
 
-    return hierarchyDevices.map((device) => (
-      <div
-        key={`device-${device.id}`}
-        className={`flex items-center gap-3 py-2 px-4 cursor-pointer transition-colors ml-8 ${
-          selectedDeviceId === device.id
-            ? 'bg-[#6656F5] text-white'
-            : 'hover:bg-[#2A2D47] text-gray-300 hover:text-white'
-        }`}
-        onClick={() => handleDeviceClick(device)}
-      >
-        <div className="w-4"></div>
-        {getIconComponent('Device')}
-        <span className="text-sm flex-1">{device.serial_number}</span>
-        <div className="w-2 h-2 bg-green-500 rounded-full" />
-      </div>
-    ));
+    return hierarchyDevices.map((device) => {
+      // Get the enhanced device data to check status
+      const enhancedDevice = enhancedDevices[device.serial_number];
+      const isOnline = enhancedDevice?.status === 'Online';
+
+      return (
+        <div
+          key={`device-${device.id}`}
+          className={`flex items-center gap-3 py-2 px-4 cursor-pointer transition-colors ml-8 ${
+            selectedDeviceId === device.id
+              ? 'bg-[#6656F5] text-white'
+              : 'hover:bg-[#2A2D47] text-gray-300 hover:text-white'
+          }`}
+          onClick={() => handleDeviceClick(device)}
+        >
+          <div className="w-4"></div>
+          {getIconComponent('Device')}
+          <span className="text-sm flex-1">{device.serial_number}</span>
+          <div
+            className={`w-2 h-2 rounded-full ${
+              isOnline
+                ? 'bg-[#17F083] dark:bg-[#17F083]'
+                : 'bg-[#ec4856ff] dark:bg-[#ec4856ff]'
+            }`}
+          />
+        </div>
+      );
+    });
   };
 
   const renderNavigationItem = (item: HierarchyNode, level = 0) => {
